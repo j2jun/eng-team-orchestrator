@@ -3,3 +3,4 @@ __pycache__/
 .env
 tickets/*/
 !tickets/.gitkeep
+team.config.json
