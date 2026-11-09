@@ -1,125 +1,172 @@
-# eng-team-orchestrator
+<div align="center">
+
+# 🧑‍💼🤖 eng-team-orchestrator
+
+<a href="https://github.com/j2jun/eng-team-orchestrator">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=20&duration=2800&pause=900&color=7C3AED&center=true&vCenter=true&width=620&lines=A+small+engineering+team%2C+made+of+agents.;PM+%E2%86%92+TPM+%E2%86%92+Researcher+%E2%86%92+SWE+%2B+QE+%E2%86%92+DevOps;Plain+files+as+the+task+graph.+No+message+bus." alt="Typing banner: A small engineering team, made of agents" />
+</a>
+
+[![test](https://github.com/j2jun/eng-team-orchestrator/actions/workflows/test.yml/badge.svg)](https://github.com/j2jun/eng-team-orchestrator/actions/workflows/test.yml)
+![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)
+![Claude Agent SDK](https://img.shields.io/badge/Claude%20Agent%20SDK-0.2.179-D97757)
+![Sandboxed](https://img.shields.io/badge/bash-sandboxed-16A34A)
+
+</div>
 
 A hybrid multi-agent orchestrator that models a small engineering team as Claude Agent SDK
-subagents: TPM, Researcher, Tech Lead, SWE, QE, coordinated by a top-level orchestrator.
+subagents (TPM, Researcher, Tech Lead, SWE, QE, plus optional PM and DevOps), coordinated
+by a top-level orchestrator.
 
-**Hybrid** = hierarchical dispatch (the orchestrator assigns tickets) + peer escalation
-channels (subagents hand work to each other directly via shared files, only bubbling up to
-the orchestrator when something needs a cross-workstream decision).
+> [!TIP]
+> **Hybrid** = 🏛️ hierarchical dispatch (the orchestrator assigns tickets) + 🤝 peer
+> channels (agents hand work to each other through shared files, and only bubble up to the
+> orchestrator when something needs a cross-workstream decision).
 
-## How it's coordinated
+## 🗺️ How a request flows
 
-No message bus — the task graph is plain files in the target repo under
-`tickets/<RUN-ID>/<TICKET-ID>/` (one folder per run, so old tickets never affect a new run):
+```mermaid
+flowchart LR
+    R([📨 Request]) --> PM{{🧭 pm<br/><i>optional</i>}}
+    R --> TPM
+    PM --> TPM[📋 tpm<br/>writes specs]
+    TPM -->|open_questions| RES[🔬 researcher]
+    TPM -->|shared interface| TL[🏗️ tech-lead]
+    RES --> WORK
+    TL --> WORK
+    TPM --> WORK
+    subgraph WORK [⚡ in parallel]
+        SWE[👩‍💻 swe<br/>implements]
+        QE[🧪 qe<br/>tests + verifies]
+        SWE <-->|notes.md| QE
+    end
+    WORK -->|verified ✅| DEV{{🚀 devops<br/><i>optional</i>}}
+    WORK -.->|ESCALATE:| ORC[[🧑‍💼 orchestrator]]
+    DEV --> DONE([🏁 released])
+```
 
-- `spec.json` — ticket, title, acceptance_criteria, owner_module, open_questions, status
-- `notes.md` — a running log every role reads/writes directly. Peer handoffs (SWE ↔ QE,
-  SWE ↔ Researcher) happen here. Any line starting with `ESCALATE:` gets one orchestrator
-  turn to resolve (it rewrites the line to `RESOLVED: <decision>`); if it's still open after
-  that, the run stops and prints it for a human.
+## 🗂️ The task graph is just files
 
-A run ends when every ticket is `verified` (or `released` / `no-release` when devops is enabled).
+No message bus. Each run gets its own folder in the target repo,
+`tickets/<RUN-ID>/<TICKET-ID>/`, so old tickets never affect a new run:
 
-## Roles
+| File | What's in it |
+|---|---|
+| 📄 `spec.json` | ticket, title, acceptance_criteria, owner_module, open_questions, status |
+| 📝 `notes.md` | running log every role reads and writes; peer handoffs (SWE ↔ QE, SWE ↔ Researcher) happen here |
 
-| Agent | Role prompt | Engages when |
+**Escalations** 🚨: a line starting with `ESCALATE:` gets one orchestrator turn to resolve.
+The orchestrator rewrites it to `RESOLVED: <decision>`. If it's still open after that, the
+run stops and prints it for you.
+
+**Done** 🏁: every ticket is `verified`, or `released` / `no-release` when devops is enabled.
+
+## 👥 Roles
+
+| | Agent | Engages when |
 |---|---|---|
-| pm | `agents/pm.md` | Request is open-ended about *what/why* — skipped for already-scoped tickets |
-| tpm | `agents/tpm.md` | Always (after pm, if pm ran) — turns intent into non-overlapping tickets |
-| researcher | `agents/researcher.md` | A ticket's spec has `open_questions` |
-| tech-lead | `agents/tech_lead.md` | Multiple tickets share an interface or boundaries risk colliding |
-| swe | `agents/swe.md` | Ticket is unblocked (no open_questions) — implements inside owner_module |
-| qe | `agents/qe.md` | Same time as swe, not after — drafts tests from the spec, verifies the diff |
-| devops | `agents/devops.md` | Ticket status is "verified" — decides release strategy, ships, owns rollback |
+| 🧭 | **pm** *(opt-in)* | Request is open-ended about *what/why*; skipped for already-scoped tickets |
+| 📋 | **tpm** | Always (after pm, if pm ran); turns intent into non-overlapping tickets |
+| 🔬 | **researcher** | A ticket's spec has `open_questions` |
+| 🏗️ | **tech-lead** | Multiple tickets share an interface or their boundaries could collide |
+| 👩‍💻 | **swe** | Ticket is unblocked; implements inside its `owner_module` only |
+| 🧪 | **qe** | *Same time* as swe, not after; drafts tests from the spec, then verifies the diff |
+| 🚀 | **devops** *(opt-in)* | Ticket is `verified`; picks the release strategy, ships, owns rollback |
 
-Full routing/escalation contract given to the top-level session lives in
-`agents/orchestrator.md`.
+Role prompts live in [`agents/`](agents/). The full routing and escalation contract for the
+top-level session is [`agents/orchestrator.md`](agents/orchestrator.md).
 
-## Setup
+## 🚀 Quick start
 
 ```bash
 pip install claude-agent-sdk
-```
-
-Uses the same authenticated `claude` CLI you're already logged into — no separate API key
-needed.
-
-Then configure your team once:
-
-```bash
-python setup.py
-```
-
-This writes `team.config.json` (gitignored — it's per-user/per-machine): which optional
-roles are enabled (pm, devops — off by default; tech-lead defaults on), model per role,
-how many tickets each role can run concurrently, the target repo this team operates on
-(stored as an absolute path; it can't be this orchestrator repo itself),
-an optional house-rules file appended to every role's prompt, and how many nudge-turns the
-orchestrator gets before giving up. Re-run `setup.py` any time to reconfigure — it pre-fills
-your current values.
-
-## Run
-
-```bash
+python setup.py                                   # 🛠️ one-time team setup
 python orchestrator.py "add rate limiting to the /login endpoint"
 ```
 
-### Bypass routing — dispatch one role directly
+> [!NOTE]
+> It uses the `claude` CLI login you already have, so no separate API key is needed. Runs
+> count against that account's usage.
 
-If you already know which role should handle something, skip the tpm→researcher→swe/qe
-routing algorithm entirely:
+<details>
+<summary>🛠️ <b>What <code>setup.py</code> configures</b></summary>
+
+<br/>
+
+It writes `team.config.json` (gitignored, since it's per user and per machine):
+
+- ✅ which optional roles are on (pm and devops are off by default)
+- 🧠 the model for each role, plus `orchestrator_model` for the top-level session
+- 🔢 how many tickets each role can run at once
+- 🎯 the target repo (stored as an absolute path; it can't be this orchestrator repo)
+- 📜 an optional house-rules file appended to every role's prompt
+- 💸 `max_budget_usd` for a run, and how many nudge turns the orchestrator gets
+- 📦 whether Bash runs in the OS sandbox
+
+Re-run it any time; it pre-fills your current values.
+
+</details>
+
+### 🎯 Skip routing: run one role directly
+
+If you already know which role should handle something:
 
 ```bash
 python orchestrator.py --agent swe "fix the off-by-one in the rate limiter window"
-python orchestrator.py --agent qe "write a test plan for tickets/RATE-LIMIT-1"
+python orchestrator.py --agent qe  "write a test plan for tickets/RATE-LIMIT-1"
 ```
 
-This runs that one role directly against the request — no Task-tool subagent dispatch, so
-no async-completion waiting either; it just does its own tool calls and returns.
+That role works the request itself. No dispatch, no routing.
 
-## Self-check
+### 🙋 When the team needs you
+
+There's no live user in a session. PM/TPM write `ESCALATE: need user input: <question>` to
+`tickets/<RUN-ID>/QUESTIONS/notes.md`, and the run stops immediately and prints it. Answer
+by re-running with a clearer request.
+
+## 🛡️ Safety
+
+| | Guard | How |
+|---|---|---|
+| 🔒 | No blanket permissions | `dontAsk` mode: anything not pre-approved is denied |
+| 🧰 | Tools per role | Subagents get only their role's tools. A hook stops the orchestrator itself from using anything beyond Agent/Read/Write/Glob/Grep |
+| 📁 | File writes | Write/Edit are approved only inside the target repo |
+| 📦 | Bash sandbox | On by default: writes stay in the target repo (and temp dirs), network is blocked |
+| 🧹 | Isolated sessions | Your personal Claude Code hooks, plugins, agents, MCP servers and skills are not loaded |
+| 🚦 | Gated dispatch | A hook allows only roles on this run's team, at most `concurrency[role]` at once, always in the foreground |
+| 💸 | Budget cap | `max_budget_usd` (default $10) stops a run |
+
+> [!WARNING]
+> - The budget is checked *between* API calls, so one expensive call can overshoot it.
+> - Devops deploy commands usually need network access, so set `sandbox: false` when devops ships.
+> - Without session isolation, your own setup gets sent on every call. In testing that was
+>   ~1.2M tokens and ~$5 for a single orchestrator turn.
+
+## 🧪 Self-check
 
 ```bash
 python test_orchestrator.py
 ```
 
-## Safety
+CI runs this on every push and PR. It never calls the Claude API.
 
-- Each session gets only its role's tools (`tools=`), and runs in `dontAsk` mode: anything
-  not pre-approved is denied rather than every permission check being bypassed.
-- Bash runs in the OS sandbox by default (`sandbox: true`): writes are confined to the target
-  repo and network access is blocked. Deploy commands from devops will usually need it off.
-  Write/Edit tools aren't path-scoped — they can still write outside the target repo.
-- Sessions are isolated from your personal Claude Code setup (`setting_sources=[]`, no MCP
-  servers, no skills). Without this, your hooks, plugins and agent catalog ride along on every
-  call — in testing that was ~1.2M tokens and ~$5 for a single orchestrator turn.
-- The orchestrator session's model is `orchestrator_model` (default `sonnet`). Unset, the CLI
-  picks its own default, which can be Opus.
-- `max_budget_usd` (default $10) stops a run, but it's checked between API calls, so one
-  expensive call can overshoot it.
-- The OS sandbox still allows writes to temp directories (`$TMPDIR`, `/tmp`).
-- The orchestrator session has every role's tools available (subagents can't use a tool the
-  session lacks); a hook denies the orchestrator itself anything beyond Agent/Read/Write/Glob/Grep.
-- Dispatch is gated in code by a hook, not just prompt text: only roles on this run's team,
-  at most `concurrency[role]` in flight at once, always in the foreground.
+## 📌 Status
 
-## Questions for you
+<details>
+<summary>🧠 <b>Routing and the nudge loop</b></summary>
 
-There's no live user in a session. PM/TPM write `ESCALATE: need user input: <question>` to
-`tickets/<RUN-ID>/QUESTIONS/notes.md`; the run stops immediately and prints it. Answer by
-re-running with a clarified request.
+<br/>
 
-## Status
+Routing is left to the top-level model's judgment per `agents/orchestrator.md`, not
+hand-coded in Python. Swap in deterministic Python routing if you need it more predictable.
 
-Routing is left to the top-level LLM's judgment per `agents/orchestrator.md` rather than
-hand-coded in Python. Swap in deterministic Python routing if you need it to be less
-judgment-based and more predictable.
-
-Subagent dispatch blocks until the agent finishes; it only runs in the background if the
+Subagent dispatch blocks until the agent finishes. It only runs in the background if the
 model asks for `run_in_background`, and the dispatch hook turns that off. The nudge loop
-(`max_turns` in config) drives the routing contract from one step to the next and is a
-safety net, not a wait on async agents.
+(`max_turns` in config) moves the routing contract from one step to the next and is a safety
+net, not a wait on async agents.
 
-Known limitation: parallel SWEs share one working tree. `owner_module` keeps them out of each
-other's files, but only by prompt, and concurrent test runs can collide. Per-ticket git
-worktrees would fix this; that needs a merge step the orchestrator doesn't have yet.
+</details>
+
+> [!CAUTION]
+> **Known limitation:** parallel SWEs share one working tree. `owner_module` keeps them out of
+> each other's files, but only by prompt, and concurrent test runs can collide. Per-ticket git
+> worktrees would fix this, but that needs a merge step the orchestrator doesn't have yet.
