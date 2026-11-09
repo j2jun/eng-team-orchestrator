@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 ESCALATE_MARKER = "ESCALATE:"
+USER_INPUT_MARKER = "ESCALATE: need user input:"  # only a human can answer these
 # "no-release" = orchestrator decided devops doesn't apply (work never leaves the repo).
 TERMINAL_STATUSES = {"verified", "released", "no-release"}
 TERMINAL_WITH_DEVOPS = {"released", "no-release"}
@@ -54,9 +55,12 @@ def next_action(tickets_dir: Path, terminal: set[str], last_escalations: dict) -
     """What the run loop does after a turn: 'resolve', 'stuck', 'done', or 'continue'.
 
     An escalation gets one orchestrator turn to resolve; if the exact same set is
-    still open after that turn, it needs a human ('stuck').
+    still open after that turn, it needs a human ('stuck'). Questions for the user stop at once.
     """
     escalations = pending_escalations(tickets_dir)
+    needs_user = any(line.startswith(USER_INPUT_MARKER) for lines in escalations.values() for line in lines)
+    if needs_user:
+        return "stuck", escalations
     if escalations:
         return ("stuck" if escalations == last_escalations else "resolve"), escalations
     if all_tickets_terminal(tickets_dir, terminal):

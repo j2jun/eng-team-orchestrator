@@ -29,6 +29,8 @@ with `ESCALATE:`. That line always means one of: scope changed, module boundarie
 independent, acceptance criteria were wrong, or a ticket is blocked on another. Read the line,
 make the call (rescope, resplit, reassign), then rewrite that line in notes.md to start with
 `RESOLVED:` followed by your decision. An unresolved `ESCALATE:` line stops the run for a human.
+Lines starting `ESCALATE: need user input:` are questions for the user — never answer them
+yourself; leave them as-is so the run stops and shows them.
 
 Merge gate: a ticket is mergeable only once its spec.json status is "verified" (qe's signal).
 Once every ticket in the batch is verified (and released, where devops applies), consolidate

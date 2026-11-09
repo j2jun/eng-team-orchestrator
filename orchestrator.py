@@ -14,9 +14,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage
 
-from config import house_rules_text, load_config, target_repo_path
+from config import DEFAULTS, house_rules_text, load_config, target_repo_path
 from task_graph import TERMINAL_STATUSES, TERMINAL_WITH_DEVOPS, next_action
 
 ROOT = Path(__file__).parent
@@ -44,6 +44,90 @@ ROLE_TOOLS = {
     "qe": ["Read", "Write", "Bash", "Grep", "Glob"],
     "devops": ["Read", "Write", "Bash", "Grep", "Glob"],
 }
+# "Agent" is the subagent-dispatch tool ("Task" is its legacy alias).
+ORCHESTRATOR_TOOLS = ["Agent", "Read", "Write", "Glob", "Grep"]
+
+
+def _pre_tool_output(decision: str, reason: str = "", updated_input: dict | None = None) -> dict:
+    out = {"hookEventName": "PreToolUse", "permissionDecision": decision}
+    if reason:
+        out["permissionDecisionReason"] = reason
+    if updated_input is not None:
+        out["updatedInput"] = updated_input
+    return {"hookSpecificOutput": out}
+
+
+class DispatchGate:
+    """Enforces, in code rather than prompt text, what the orchestrator may dispatch:
+    only roster roles, at most `limits[role]` in flight at once, always in the foreground
+    (so a turn returns only once its dispatched agents finish)."""
+
+    def __init__(self, roster: set[str], limits: dict[str, int]):
+        self.roster = roster
+        self.limits = limits
+        self.in_flight: dict[str, str] = {}  # tool_use_id -> role
+
+    def admit(self, tool_input: dict, tool_use_id: str) -> dict:
+        role = tool_input.get("subagent_type")
+        if role not in self.roster:
+            return _pre_tool_output("deny", f"'{role}' is not on this run's team: {sorted(self.roster)}")
+        running = sum(1 for r in self.in_flight.values() if r == role)
+        limit = self.limits.get(role)
+        if limit is not None and running >= limit:
+            return _pre_tool_output("deny", f"{role} concurrency limit {limit} reached; wait for one to finish")
+        self.in_flight[tool_use_id] = role
+        return _pre_tool_output("allow", updated_input={**tool_input, "run_in_background": False})
+
+    def release(self, tool_use_id: str) -> None:
+        self.in_flight.pop(tool_use_id, None)
+
+    def hooks(self) -> dict:
+        async def pre(input_data, tool_use_id, context):
+            return self.admit(input_data["tool_input"], input_data["tool_use_id"])
+
+        async def post(input_data, tool_use_id, context):
+            self.release(input_data["tool_use_id"])
+            return {}
+
+        return {
+            "PreToolUse": [HookMatcher(matcher="Agent|Task", hooks=[pre])],
+            "PostToolUse": [HookMatcher(matcher="Agent|Task", hooks=[post])],
+            "PostToolUseFailure": [HookMatcher(matcher="Agent|Task", hooks=[post])],
+        }
+
+
+def _base_options(config: dict, target_repo, tools: list[str], extra_allowed: list[str] = ()) -> dict:
+    """Shared safety settings. `tools` is what the session can use at all; `dontAsk` denies
+    anything not pre-approved instead of bypassing every permission check."""
+    options = {
+        "tools": tools,
+        "allowed_tools": sorted(set(tools) | set(extra_allowed)),
+        "permission_mode": "dontAsk",
+        "cwd": str(target_repo),
+        "max_budget_usd": config.get("max_budget_usd", DEFAULTS["max_budget_usd"]),
+    }
+    if config.get("sandbox", True):
+        # OS-level sandbox for Bash: writes confined to the target repo, network blocked
+        # unless allowed. Commands can't opt out of it.
+        options["sandbox"] = {"enabled": True, "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False}
+    return options
+
+
+async def _drain(client) -> "ResultMessage | None":
+    """Print one turn's messages; return its ResultMessage."""
+    result = None
+    async for message in client.receive_response():
+        print(message)
+        if isinstance(message, ResultMessage):
+            result = message
+    return result
+
+
+def _budget_hit(result) -> bool:
+    if result is not None and result.subtype == "error_max_budget_usd":
+        print(f"[orchestrator] stopped: max_budget_usd reached (spent ${result.total_cost_usd}).")
+        return True
+    return False
 
 
 CONTINUE_PROMPT = (
@@ -114,25 +198,26 @@ async def run(request: str) -> None:
     agents = build_agents(config, house_rules, tickets_rel)
     terminal = TERMINAL_WITH_DEVOPS if "devops" in agents else TERMINAL_STATUSES
 
+    gate = DispatchGate(set(agents), config.get("concurrency", {}))
+    # Subagents' tools must be pre-approved too, or dontAsk denies them.
+    subagent_tools = [t for role in agents for t in ROLE_TOOLS[role]]
     options = ClaudeAgentOptions(
         agents=agents,
         system_prompt=build_orchestrator_prompt(config, agents, house_rules, tickets_rel),
-        allowed_tools=["Task", "Read", "Write", "Glob", "Grep"],
-        cwd=str(target_repo),
-        permission_mode="bypassPermissions",
+        hooks=gate.hooks(),
+        **_base_options(config, target_repo, ORCHESTRATOR_TOOLS, subagent_tools),
     )
     action, escalations = "continue", {}
     async with ClaudeSDKClient(options=options) as client:
         prompt = f"New request: {request}"
         last_escalations: dict = {}
-        # Subagent dispatch can finish after the top-level turn ends, so keep nudging
+        # Dispatches are forced to the foreground, so a turn normally ends with its agents
+        # done. The loop drives the routing contract's next steps (and is a safety net)
         # until the task graph is terminal or an escalation survives a resolve turn.
-        # ponytail: polling loop, not an event-driven wait on task completion —
-        # upgrade if the SDK exposes a proper "await dispatched agent" hook.
         for _ in range(max_turns + 1):  # first request + max_turns nudges
             await client.query(prompt)
-            async for message in client.receive_response():
-                print(message)
+            if _budget_hit(await _drain(client)):
+                break
             action, escalations = next_action(tickets_dir, terminal, last_escalations)
             if action in ("done", "stuck"):
                 break
@@ -148,8 +233,7 @@ async def run(request: str) -> None:
 async def run_single_agent(role: str, request: str) -> None:
     """Bypass the routing algorithm entirely — you pick the role, you dispatch it directly.
 
-    No Task-tool subagent dispatch here, so no async-completion polling is needed: this
-    role's own tool calls (Read/Write/Bash/...) run synchronously within its one turn.
+    No subagent dispatch here: this role's own tool calls run within its one turn.
     """
     config = load_config()
     if role not in config["roles"] or not config["roles"][role].get("enabled", True):
@@ -158,19 +242,16 @@ async def run_single_agent(role: str, request: str) -> None:
             f"Enabled roles: {sorted(r for r, s in config['roles'].items() if s.get('enabled', True))}"
         )
     house_rules = house_rules_text(config)
-    target_repo = str(target_repo_path(config))
+    target_repo = target_repo_path(config)
 
     options = ClaudeAgentOptions(
         system_prompt=_role_prompt(role, house_rules),
-        allowed_tools=ROLE_TOOLS[role],
-        cwd=target_repo,
-        permission_mode="bypassPermissions",
         model=config["roles"][role].get("model", "sonnet"),
+        **_base_options(config, target_repo, ROLE_TOOLS[role]),
     )
     async with ClaudeSDKClient(options=options) as client:
         await client.query(request)
-        async for message in client.receive_response():
-            print(message)
+        _budget_hit(await _drain(client))
 
 
 def main() -> None:

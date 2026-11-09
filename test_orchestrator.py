@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from config import ROOT, house_rules_text, load_config, resolve_path, save_config, target_repo_path
-from orchestrator import build_agents, build_orchestrator_prompt
+from orchestrator import DispatchGate, _base_options, build_agents, build_orchestrator_prompt
 from task_graph import (
     TERMINAL_WITH_DEVOPS, all_tickets_terminal, find_escalations, next_action, pending_escalations,
 )
@@ -139,6 +139,31 @@ def test_next_action_gives_escalation_one_resolve_turn():
         # orchestrator rewrote it -> no longer counted
         (t1 / "notes.md").write_text("RESOLVED: scope changed -> split into T-002\n")
         assert next_action(tickets_dir, terminal, esc) == ("done", {})
+        # a question for the user stops immediately, no orchestrator turn spent on it
+        (t1 / "notes.md").write_text("ESCALATE: need user input: which auth provider?\n")
+        assert next_action(tickets_dir, terminal, {})[0] == "stuck"
+
+
+def test_dispatch_gate_enforces_roster_concurrency_and_foreground():
+    gate = DispatchGate({"swe", "qe"}, {"swe": 1})
+    decision = lambda out: out["hookSpecificOutput"]["permissionDecision"]
+    assert decision(gate.admit({"subagent_type": "general-purpose"}, "t0")) == "deny"
+    first = gate.admit({"subagent_type": "swe", "prompt": "T-1", "run_in_background": True}, "t1")
+    assert decision(first) == "allow"
+    assert first["hookSpecificOutput"]["updatedInput"]["run_in_background"] is False
+    assert first["hookSpecificOutput"]["updatedInput"]["prompt"] == "T-1"
+    assert decision(gate.admit({"subagent_type": "swe"}, "t2")) == "deny"  # limit 1
+    assert decision(gate.admit({"subagent_type": "qe"}, "t3")) == "allow"  # no limit set
+    gate.release("t1")
+    assert decision(gate.admit({"subagent_type": "swe"}, "t4")) == "allow"
+
+
+def test_base_options_restrict_tools_and_never_bypass():
+    opts = _base_options({"max_budget_usd": 5}, "/repo", ["Read"], ["Bash"])
+    assert opts["tools"] == ["Read"] and opts["allowed_tools"] == ["Bash", "Read"]
+    assert opts["permission_mode"] == "dontAsk" and opts["max_budget_usd"] == 5
+    assert opts["sandbox"]["allowUnsandboxedCommands"] is False
+    assert "sandbox" not in _base_options({"sandbox": False}, "/repo", ["Read"])
 
 
 def test_paths_resolve_against_repo_not_cwd():
@@ -181,4 +206,6 @@ if __name__ == "__main__":
     test_next_action_gives_escalation_one_resolve_turn()
     test_paths_resolve_against_repo_not_cwd()
     test_prompts_are_scoped_to_run_folder()
+    test_dispatch_gate_enforces_roster_concurrency_and_foreground()
+    test_base_options_restrict_tools_and_never_bypass()
     print("ok")

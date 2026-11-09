@@ -11,6 +11,8 @@ DEFAULTS = {
     "target_repo": None,
     "house_rules": None,
     "max_turns": 20,
+    "max_budget_usd": 10.0,  # hard stop for a whole run
+    "sandbox": True,  # OS-level Bash sandbox; devops deploys may need it off
     "concurrency": {"swe": 4, "qe": 3, "researcher": 2, "tpm": 2},
     "roles": {role: {"enabled": role not in OPTIONAL_ROLES, "model": "sonnet"} for role in VALID_ROLES},
 }

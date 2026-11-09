@@ -38,6 +38,8 @@ def main() -> None:
         "target_repo": _abs(target_repo_answer),
         "house_rules": None if house_rules_answer.strip().lower() == "none" else _abs(house_rules_answer),
         "max_turns": int(ask("Max orchestrator nudge-turns before giving up", current["max_turns"])),
+        "max_budget_usd": float(ask("Max spend per run in USD", current.get("max_budget_usd", DEFAULTS["max_budget_usd"]))),
+        "sandbox": ask_yn("Sandbox Bash (writes limited to the target repo, network blocked)", current.get("sandbox", True)),
         "concurrency": {
             "swe": int(ask("Max SWE tickets running concurrently", current["concurrency"]["swe"])),
             "qe": int(ask("Max QE running concurrently", current["concurrency"]["qe"])),
