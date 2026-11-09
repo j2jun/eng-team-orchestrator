@@ -16,6 +16,10 @@ def ask_yn(prompt: str, default: bool) -> bool:
     return default if not answer else answer.startswith("y")
 
 
+def _abs(path: str) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
 def main() -> None:
     current = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else DEFAULTS
 
@@ -28,10 +32,14 @@ def main() -> None:
         "Path to a house-rules file prepended to every role's prompt ('none' to skip)",
         house_rules_default,
     )
+    target_repo_answer = ask("Repo this team operates on", current.get("target_repo") or Path.cwd())
     config = {
-        "target_repo": ask("Repo this team operates on", current["target_repo"]),
-        "house_rules": None if house_rules_answer.strip().lower() == "none" else house_rules_answer,
+        # Stored absolute, so runs don't depend on the directory you launch from.
+        "target_repo": _abs(target_repo_answer),
+        "house_rules": None if house_rules_answer.strip().lower() == "none" else _abs(house_rules_answer),
         "max_turns": int(ask("Max orchestrator nudge-turns before giving up", current["max_turns"])),
+        "max_budget_usd": float(ask("Max spend per run in USD", current.get("max_budget_usd", DEFAULTS["max_budget_usd"]))),
+        "sandbox": ask_yn("Sandbox Bash (writes limited to the target repo, network blocked)", current.get("sandbox", True)),
         "concurrency": {
             "swe": int(ask("Max SWE tickets running concurrently", current["concurrency"]["swe"])),
             "qe": int(ask("Max QE running concurrently", current["concurrency"]["qe"])),
@@ -41,14 +49,17 @@ def main() -> None:
         "roles": {},
     }
 
-    default_model = ask("Default model for all roles (sonnet/opus/haiku)", current["roles"]["swe"]["model"])
+    previous_default = current["roles"]["swe"]["model"]
+    default_model = ask("Default model for all roles (sonnet/opus/haiku)", previous_default)
     for role in sorted(VALID_ROLES):
         role_current = current["roles"].get(role, DEFAULTS["roles"][role])
         if role in OPTIONAL_ROLES:
             enabled = ask_yn(f"Enable {role}", role_current["enabled"])
         else:
             enabled = True
-        model = ask(f"Model for {role}", role_current.get("model", default_model))
+        # Changing the default re-seeds every role; keeping it pre-fills each role's current model.
+        role_default = default_model if default_model != previous_default else role_current.get("model", default_model)
+        model = ask(f"Model for {role}", role_default)
         config["roles"][role] = {"enabled": enabled, "model": model}
 
     save_config(config)

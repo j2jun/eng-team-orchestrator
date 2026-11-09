@@ -9,12 +9,16 @@ the orchestrator when something needs a cross-workstream decision).
 
 ## How it's coordinated
 
-No message bus — the task graph is plain files under `tickets/<TICKET-ID>/`:
+No message bus — the task graph is plain files in the target repo under
+`tickets/<RUN-ID>/<TICKET-ID>/` (one folder per run, so old tickets never affect a new run):
 
 - `spec.json` — ticket, title, acceptance_criteria, owner_module, open_questions, status
 - `notes.md` — a running log every role reads/writes directly. Peer handoffs (SWE ↔ QE,
-  SWE ↔ Researcher) happen here. Any line starting with `ESCALATE:` is a signal the
-  orchestrator picks up on its next pass — everything else is between the agents.
+  SWE ↔ Researcher) happen here. Any line starting with `ESCALATE:` gets one orchestrator
+  turn to resolve (it rewrites the line to `RESOLVED: <decision>`); if it's still open after
+  that, the run stops and prints it for a human.
+
+A run ends when every ticket is `verified` (or `released` / `no-release` when devops is enabled).
 
 ## Roles
 
@@ -48,7 +52,8 @@ python setup.py
 
 This writes `team.config.json` (gitignored — it's per-user/per-machine): which optional
 roles are enabled (pm, devops — off by default; tech-lead defaults on), model per role,
-how many tickets each role can run concurrently, the target repo this team operates on,
+how many tickets each role can run concurrently, the target repo this team operates on
+(stored as an absolute path; it can't be this orchestrator repo itself),
 an optional house-rules file appended to every role's prompt, and how many nudge-turns the
 orchestrator gets before giving up. Re-run `setup.py` any time to reconfigure — it pre-fills
 your current values.
@@ -78,15 +83,34 @@ no async-completion waiting either; it just does its own tool calls and returns.
 python test_orchestrator.py
 ```
 
+## Safety
+
+- Each session gets only its role's tools (`tools=`), and runs in `dontAsk` mode: anything
+  not pre-approved is denied rather than every permission check being bypassed.
+- Bash runs in the OS sandbox by default (`sandbox: true`): writes are confined to the target
+  repo and network access is blocked. Deploy commands from devops will usually need it off.
+  Write/Edit tools aren't path-scoped — they can still write outside the target repo.
+- `max_budget_usd` (default $10) is a hard stop for a run.
+- Dispatch is gated in code by a hook, not just prompt text: only roles on this run's team,
+  at most `concurrency[role]` in flight at once, always in the foreground.
+
+## Questions for you
+
+There's no live user in a session. PM/TPM write `ESCALATE: need user input: <question>` to
+`tickets/<RUN-ID>/QUESTIONS/notes.md`; the run stops immediately and prints it. Answer by
+re-running with a clarified request.
+
 ## Status
 
 Routing is left to the top-level LLM's judgment per `agents/orchestrator.md` rather than
 hand-coded in Python. Swap in deterministic Python routing if you need it to be less
 judgment-based and more predictable.
 
-Known limitation: subagent dispatch (the Task tool) runs asynchronously in this environment
-— a single query/response cycle ends before a dispatched agent like tpm/swe/qe actually
-finishes. `orchestrator.py`'s `run()` works around this with a bounded nudge-loop
-(`max_turns` in config) that keeps checking the task graph until it reaches a terminal
-state. This is a polling workaround, not an event-driven wait — fine for now, worth
-revisiting if the SDK exposes a proper completion hook.
+Subagent dispatch blocks until the agent finishes; it only runs in the background if the
+model asks for `run_in_background`, and the dispatch hook turns that off. The nudge loop
+(`max_turns` in config) drives the routing contract from one step to the next and is a
+safety net, not a wait on async agents.
+
+Known limitation: parallel SWEs share one working tree. `owner_module` keeps them out of each
+other's files, but only by prompt, and concurrent test runs can collide. Per-ticket git
+worktrees would fix this; that needs a merge step the orchestrator doesn't have yet.
