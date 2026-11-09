@@ -21,7 +21,10 @@ def _abs(path: str) -> str:
 
 
 def main() -> None:
-    current = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else DEFAULTS
+    loaded = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+    # Fill gaps from DEFAULTS so a hand-edited or older config doesn't KeyError.
+    current = {**DEFAULTS, **loaded, "concurrency": {**DEFAULTS["concurrency"], **loaded.get("concurrency", {})},
+               "roles": {**DEFAULTS["roles"], **loaded.get("roles", {})}}
 
     print("=== Engineering Team Orchestrator Setup ===")
     if CONFIG_PATH.exists():
@@ -49,6 +52,7 @@ def main() -> None:
         "roles": {},
     }
 
+    config["orchestrator_model"] = ask("Model for the orchestrator session", current["orchestrator_model"])
     previous_default = current["roles"]["swe"]["model"]
     default_model = ask("Default model for all roles (sonnet/opus/haiku)", previous_default)
     for role in sorted(VALID_ROLES):
