@@ -9,12 +9,16 @@ the orchestrator when something needs a cross-workstream decision).
 
 ## How it's coordinated
 
-No message bus — the task graph is plain files under `tickets/<TICKET-ID>/`:
+No message bus — the task graph is plain files in the target repo under
+`tickets/<RUN-ID>/<TICKET-ID>/` (one folder per run, so old tickets never affect a new run):
 
 - `spec.json` — ticket, title, acceptance_criteria, owner_module, open_questions, status
 - `notes.md` — a running log every role reads/writes directly. Peer handoffs (SWE ↔ QE,
-  SWE ↔ Researcher) happen here. Any line starting with `ESCALATE:` is a signal the
-  orchestrator picks up on its next pass — everything else is between the agents.
+  SWE ↔ Researcher) happen here. Any line starting with `ESCALATE:` gets one orchestrator
+  turn to resolve (it rewrites the line to `RESOLVED: <decision>`); if it's still open after
+  that, the run stops and prints it for a human.
+
+A run ends when every ticket is `verified` (or `released` / `no-release` when devops is enabled).
 
 ## Roles
 
@@ -48,7 +52,8 @@ python setup.py
 
 This writes `team.config.json` (gitignored — it's per-user/per-machine): which optional
 roles are enabled (pm, devops — off by default; tech-lead defaults on), model per role,
-how many tickets each role can run concurrently, the target repo this team operates on,
+how many tickets each role can run concurrently, the target repo this team operates on
+(stored as an absolute path; it can't be this orchestrator repo itself),
 an optional house-rules file appended to every role's prompt, and how many nudge-turns the
 orchestrator gets before giving up. Re-run `setup.py` any time to reconfigure — it pre-fills
 your current values.

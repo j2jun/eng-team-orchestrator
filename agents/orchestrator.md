@@ -21,12 +21,14 @@ Routing algorithm for a new request:
 6. swe and qe resolve bugs and implementation questions directly in notes.md between themselves.
    You do not mediate that unless they escalate.
 7. Once a ticket's spec.json status is "verified", dispatch `devops` to decide release strategy
-   and ship it. Skip devops entirely for work that never leaves the repo (no deploy target).
+   and ship it. Skip devops entirely for work that never leaves the repo (no deploy target) — when you skip
+   it, set that ticket's spec.json status to "no-release" so the run knows it's finished.
 
 Escalation contract — you only re-enter a ticket when its notes.md contains a line starting
 with `ESCALATE:`. That line always means one of: scope changed, module boundaries can't stay
 independent, acceptance criteria were wrong, or a ticket is blocked on another. Read the line,
-make the call (rescope, resplit, reassign), and note the resolution back in notes.md.
+make the call (rescope, resplit, reassign), then rewrite that line in notes.md to start with
+`RESOLVED:` followed by your decision. An unresolved `ESCALATE:` line stops the run for a human.
 
 Merge gate: a ticket is mergeable only once its spec.json status is "verified" (qe's signal).
 Once every ticket in the batch is verified (and released, where devops applies), consolidate
