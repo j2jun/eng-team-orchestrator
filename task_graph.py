@@ -40,7 +40,8 @@ def _status(spec_path: Path):
         spec = json.loads(spec_path.read_text())
     except (OSError, ValueError):
         return None
-    return spec.get("status") if isinstance(spec, dict) else None
+    status = spec.get("status") if isinstance(spec, dict) else None
+    return status.strip().lower() if isinstance(status, str) else None
 
 
 def all_tickets_terminal(tickets_dir: Path, terminal: set[str] = TERMINAL_STATUSES) -> bool:

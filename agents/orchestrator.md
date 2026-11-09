@@ -6,6 +6,9 @@ Task graph lives on disk under `tickets/<TICKET-ID>/`:
 - `spec.json` — {"ticket", "title", "acceptance_criteria", "owner_module", "open_questions", "status"}
 - `notes.md` — running log every role reads/writes directly (peer-to-peer handoffs)
 
+`status` is exactly one of: "scoped", "implementing done", "verified", "released",
+"no-release". Use these strings verbatim — the run loop reads them.
+
 Routing algorithm for a new request:
 1. If the request is open-ended about *what* to build or *why* (not already a scoped ticket),
    dispatch `pm` first to produce `tickets/BRIEF.md`. Skip this step for already-unambiguous

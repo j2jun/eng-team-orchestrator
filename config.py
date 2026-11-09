@@ -11,6 +11,7 @@ DEFAULTS = {
     "target_repo": None,
     "house_rules": None,
     "max_turns": 20,
+    "orchestrator_model": "sonnet",  # the top-level session; unset, the CLI picks its own default
     "max_budget_usd": 10.0,  # hard stop for a whole run
     "sandbox": True,  # OS-level Bash sandbox; devops deploys may need it off
     "concurrency": {"swe": 4, "qe": 3, "researcher": 2, "tpm": 2},
@@ -21,8 +22,13 @@ DEFAULTS = {
 def load_config(path: Path = CONFIG_PATH) -> dict:
     if not path.exists():
         raise SystemExit(f"No {path.name} found — run `python setup.py` first.")
-    config = json.loads(path.read_text())
-    unknown = set(config.get("roles", {})) - VALID_ROLES
+    try:
+        config = json.loads(path.read_text())
+    except ValueError as e:
+        raise SystemExit(f"{path.name} isn't valid JSON ({e}) — fix it or re-run `python setup.py`.")
+    if not isinstance(config, dict) or not isinstance(config.get("roles"), dict):
+        raise SystemExit(f"{path.name} has no 'roles' section — re-run `python setup.py`.")
+    unknown = set(config["roles"]) - VALID_ROLES
     if unknown:
         raise SystemExit(f"Unknown role(s) in {path.name}: {sorted(unknown)}. Valid: {sorted(VALID_ROLES)}")
     return config

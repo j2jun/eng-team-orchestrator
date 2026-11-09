@@ -154,6 +154,10 @@ def test_dispatch_gate_enforces_roster_concurrency_and_foreground():
     assert first["hookSpecificOutput"]["updatedInput"]["prompt"] == "T-1"
     assert decision(gate.admit({"subagent_type": "swe"}, "t2")) == "deny"  # limit 1
     assert decision(gate.admit({"subagent_type": "qe"}, "t3")) == "allow"  # no limit set
+    # orchestrator (no agent_id) can't implement; a subagent can
+    assert decision(gate.check({"tool_name": "Bash", "tool_input": {}, "tool_use_id": "b1"})) == "deny"
+    assert gate.check({"tool_name": "Bash", "tool_input": {}, "tool_use_id": "b2", "agent_id": "a1"}) == {}
+    assert gate.check({"tool_name": "Read", "tool_input": {}, "tool_use_id": "r1"}) == {}
     gate.release("t1")
     assert decision(gate.admit({"subagent_type": "swe"}, "t4")) == "allow"
 
@@ -163,6 +167,7 @@ def test_base_options_restrict_tools_and_never_bypass():
     assert opts["tools"] == ["Read"] and opts["allowed_tools"] == ["Bash", "Read"]
     assert opts["permission_mode"] == "dontAsk" and opts["max_budget_usd"] == 5
     assert opts["sandbox"]["allowUnsandboxedCommands"] is False
+    assert opts["setting_sources"] == [] and opts["strict_mcp_config"] is True and opts["skills"] == []
     assert "sandbox" not in _base_options({"sandbox": False}, "/repo", ["Read"])
 
 

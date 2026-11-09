@@ -90,7 +90,16 @@ python test_orchestrator.py
 - Bash runs in the OS sandbox by default (`sandbox: true`): writes are confined to the target
   repo and network access is blocked. Deploy commands from devops will usually need it off.
   Write/Edit tools aren't path-scoped — they can still write outside the target repo.
-- `max_budget_usd` (default $10) is a hard stop for a run.
+- Sessions are isolated from your personal Claude Code setup (`setting_sources=[]`, no MCP
+  servers, no skills). Without this, your hooks, plugins and agent catalog ride along on every
+  call — in testing that was ~1.2M tokens and ~$5 for a single orchestrator turn.
+- The orchestrator session's model is `orchestrator_model` (default `sonnet`). Unset, the CLI
+  picks its own default, which can be Opus.
+- `max_budget_usd` (default $10) stops a run, but it's checked between API calls, so one
+  expensive call can overshoot it.
+- The OS sandbox still allows writes to temp directories (`$TMPDIR`, `/tmp`).
+- The orchestrator session has every role's tools available (subagents can't use a tool the
+  session lacks); a hook denies the orchestrator itself anything beyond Agent/Read/Write/Glob/Grep.
 - Dispatch is gated in code by a hook, not just prompt text: only roles on this run's team,
   at most `concurrency[role]` in flight at once, always in the foreground.
 
